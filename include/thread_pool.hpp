@@ -9,20 +9,22 @@
 #include <type_traits>
 #include <vector>
 
-template <ptrdiff_t max_tasks = PTRDIFF_MAX> class ThreadPool {
+class ThreadPool {
   private:
 	std::mutex tasks_mutex;
 	std::vector<std::thread> threads;
-	std::counting_semaphore<max_tasks> semaphore;
+	std::counting_semaphore<PTRDIFF_MAX> semaphore;
 	std::queue<std::function<void()>> tasks;
 	std::condition_variable work_done_cv;
 
+	ptrdiff_t max_tasks;
 	bool terminate_pool = false;
 
   public:
 	explicit ThreadPool(
-		unsigned long long num_threads = std::thread::hardware_concurrency())
-		: semaphore(0) {
+		unsigned long long num_threads = std::thread::hardware_concurrency(),
+		ptrdiff_t max_tasks = PTRDIFF_MAX)
+		: semaphore(0), max_tasks(max_tasks) {
 		num_threads = std::min(num_threads, (unsigned long long)max_tasks);
 
 		for (unsigned long long i = 0; i < num_threads; i++) {
