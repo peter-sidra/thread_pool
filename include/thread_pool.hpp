@@ -66,8 +66,9 @@ class ThreadPool {
 		// block if the pool is at capacity
 		{
 			std::unique_lock uniqueLock(tasks_mutex);
-			work_done_cv.wait(uniqueLock,
-							  [this] { return tasks.size() < max_tasks; });
+			work_done_cv.wait(uniqueLock, [this] {
+				return tasks.size() < (size_t)max_tasks;
+			});
 		}
 
 		// https://stackoverflow.com/questions/25330716/move-only-version-of-stdfunction
@@ -78,10 +79,15 @@ class ThreadPool {
 
 		{
 			std::lock_guard<std::mutex> threads_lock_guard{tasks_mutex};
-			tasks.emplace(
-				[promise = std::move(promise), task, args...]() mutable {
+			tasks.emplace([promise = std::move(promise), task,
+						   ... args = std::forward<ArgTypes>(args)]() mutable {
+				if constexpr (std::is_same<R, void>::value) {
+					task(args...);
+					promise->set_value();
+				} else {
 					promise->set_value(task(args...));
-				});
+				}
+			});
 		}
 
 		semaphore.release();
