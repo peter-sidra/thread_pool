@@ -62,7 +62,7 @@ class ThreadPool {
 
 	template <typename F, typename... Args,
 			  typename R = typename std::invoke_result<F, Args...>::type>
-	auto push_task(const F &&task, Args... args) -> std::future<R> {
+	auto push_task(F &&task, Args... args) -> std::future<R> {
 		// block if the pool is at capacity
 		{
 			std::unique_lock uniqueLock(tasks_mutex);
