@@ -60,9 +60,9 @@ class ThreadPool {
 	auto operator=(const ThreadPool &) -> ThreadPool & = delete;
 	auto operator=(ThreadPool &&) -> ThreadPool & = delete;
 
-	template <typename F, typename... ArgTypes,
-			  typename R = typename std::invoke_result<F, ArgTypes...>::type>
-	auto push_task(const F &task, ArgTypes... args) -> std::future<R> {
+	template <typename F, typename... Args,
+			  typename R = typename std::invoke_result<F, Args...>::type>
+	auto push_task(const F &&task, Args... args) -> std::future<R> {
 		// block if the pool is at capacity
 		{
 			std::unique_lock uniqueLock(tasks_mutex);
@@ -71,22 +71,15 @@ class ThreadPool {
 			});
 		}
 
-		// https://stackoverflow.com/questions/25330716/move-only-version-of-stdfunction
-		// on why this is shared_ptr instead of unique_ptr
-		auto promise = std::make_shared<std::promise<R>>();
+		auto packaged_task = std::make_shared<std::packaged_task<R()>>(
+			std::bind(std::forward<F>(task), std::forward<Args>(args)...));
 
-		auto fut = promise->get_future();
+		auto fut = packaged_task->get_future();
 
 		{
 			std::lock_guard<std::mutex> threads_lock_guard{tasks_mutex};
-			tasks.emplace([promise = std::move(promise), task,
-						   ... args = std::forward<ArgTypes>(args)]() mutable {
-				if constexpr (std::is_same<R, void>::value) {
-					task(args...);
-					promise->set_value();
-				} else {
-					promise->set_value(task(args...));
-				}
+			tasks.emplace([packaged_task = std::move(packaged_task)] {
+				(*packaged_task)();
 			});
 		}
 
