@@ -1,4 +1,4 @@
-#include "thread_pool.hpp"
+#include "thread_pool/thread_pool.hpp"
 #include <future>
 #include <iostream>
 #include <string>
@@ -10,7 +10,7 @@ auto do_work(size_t index) -> std::string {
 }
 
 auto main() -> int {
-	ThreadPool pool;
+	thread_pool::ThreadPool pool;
 
 	constexpr size_t EXAMPLE_SIZE = 500;
 

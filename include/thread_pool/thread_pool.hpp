@@ -2,19 +2,21 @@
 
 #include <functional>
 #include <future>
-#include <mutex>
 #include <queue>
 #include <semaphore>
 #include <thread>
 #include <type_traits>
 #include <vector>
 
+#include "utils.hpp"
+
+namespace thread_pool {
+
 class ThreadPool {
   private:
-	std::mutex tasks_mutex;
 	std::vector<std::thread> threads;
 	std::counting_semaphore<PTRDIFF_MAX> semaphore;
-	std::queue<std::function<void()>> tasks;
+	MutexWrapper<std::queue<std::function<void()>>> tasks;
 	std::condition_variable work_done_cv;
 
 	ptrdiff_t max_tasks;
@@ -35,13 +37,16 @@ class ThreadPool {
 					// get a task from the queue
 					std::function<void()> task;
 					{
-						std::lock_guard<std::mutex> threads_lock_guard{
-							tasks_mutex};
-						if (terminate_pool && tasks.empty()) {
+						// The scoped accessor automatically locks the
+						// underlying mutex and unlocks it when it goes out of
+						// scope.
+						auto tasks_accessor = tasks.getScopedAccessor();
+
+						if (terminate_pool && tasks_accessor->empty()) {
 							return;
 						}
-						task = tasks.front();
-						tasks.pop();
+						task = tasks_accessor->front();
+						tasks_accessor->pop();
 					}
 
 					// execute the task
@@ -65,9 +70,9 @@ class ThreadPool {
 	auto push_task(F &&task, Args... args) -> std::future<R> {
 		// block if the pool is at capacity
 		{
-			std::unique_lock uniqueLock(tasks_mutex);
+			std::unique_lock uniqueLock(tasks.getMutex());
 			work_done_cv.wait(uniqueLock, [this] {
-				return tasks.size() < (size_t)max_tasks;
+				return tasks.getUnsafeAccessor().size() < (size_t)max_tasks;
 			});
 		}
 
@@ -77,8 +82,8 @@ class ThreadPool {
 		auto fut = packaged_task->get_future();
 
 		{
-			std::lock_guard<std::mutex> threads_lock_guard{tasks_mutex};
-			tasks.emplace([packaged_task = std::move(packaged_task)] {
+			auto tasks_accessor = tasks.getScopedAccessor();
+			tasks_accessor->emplace([packaged_task = std::move(packaged_task)] {
 				(*packaged_task)();
 			});
 		}
@@ -88,9 +93,10 @@ class ThreadPool {
 	}
 
 	auto wait_all() {
-		std::unique_lock uniqueLock(tasks_mutex);
+		std::unique_lock uniqueLock(tasks.getMutex());
 
-		work_done_cv.wait(uniqueLock, [this] { return tasks.empty(); });
+		work_done_cv.wait(uniqueLock,
+						  [this] { return tasks.getUnsafeAccessor().empty(); });
 	}
 
 	~ThreadPool() {
@@ -101,3 +107,5 @@ class ThreadPool {
 		}
 	}
 };
+
+} // namespace thread_pool
