@@ -67,7 +67,7 @@ class ThreadPool {
 
 	template <typename F, typename... Args,
 			  typename R = typename std::invoke_result<F, Args...>::type>
-	auto push_task(F &&task, Args... args) -> std::future<R> {
+	auto push_task(F &&task, Args &&...args) -> std::future<R> {
 		// block if the pool is at capacity
 		{
 			std::unique_lock uniqueLock(tasks.getMutex());
@@ -77,7 +77,8 @@ class ThreadPool {
 		}
 
 		auto packaged_task = std::make_shared<std::packaged_task<R()>>(
-			std::bind(std::forward<F>(task), std::forward<Args>(args)...));
+			[task = std::forward<F>(task),
+			 ... args = std::forward<Args>(args)] { task(args...); });
 
 		auto fut = packaged_task->get_future();
 
