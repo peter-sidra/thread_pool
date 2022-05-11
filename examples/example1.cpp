@@ -9,6 +9,10 @@ auto do_work(size_t index) -> std::string {
 	return "This is the result of task: " + std::to_string(index);
 }
 
+auto mutate(int &value) -> void {
+	value = value * 2;
+}
+
 auto main() -> int {
 	thread_pool::ThreadPool pool;
 
@@ -24,6 +28,10 @@ auto main() -> int {
 	for (auto &fut : futures) {
 		std::cout << fut.get() << '\n';
 	}
+
+	int x = 10;
+	pool.push_task(mutate, std::ref(x)).get();
+	std::cout << x << '\n';
 
 	return 0;
 }

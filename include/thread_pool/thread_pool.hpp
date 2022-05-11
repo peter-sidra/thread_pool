@@ -3,7 +3,6 @@
 #include <functional>
 #include <future>
 #include <queue>
-#include <semaphore>
 #include <thread>
 #include <type_traits>
 #include <vector>
@@ -15,38 +14,41 @@ namespace thread_pool {
 class ThreadPool {
   private:
 	std::vector<std::thread> threads;
-	std::counting_semaphore<PTRDIFF_MAX> semaphore;
 	MutexWrapper<std::queue<std::function<void()>>> tasks;
+	std::condition_variable work_available_cv;
 	std::condition_variable work_done_cv;
 
-	ptrdiff_t max_tasks;
+	size_t max_tasks;
 	bool terminate_pool = false;
 
   public:
 	explicit ThreadPool(
 		unsigned long long num_threads = std::thread::hardware_concurrency(),
-		ptrdiff_t max_tasks = PTRDIFF_MAX)
-		: semaphore(0), max_tasks(max_tasks) {
+		size_t max_tasks = std::numeric_limits<size_t>::max())
+		: max_tasks(max_tasks) {
 		num_threads = std::min(num_threads, (unsigned long long)max_tasks);
 
 		for (unsigned long long i = 0; i < num_threads; i++) {
 			threads.emplace_back([this] {
 				while (true) {
-					semaphore.acquire();
-
-					// get a task from the queue
 					std::function<void()> task;
-					{
-						// The scoped accessor automatically locks the
-						// underlying mutex and unlocks it when it goes out of
-						// scope.
-						auto tasks_accessor = tasks.getScopedAccessor();
 
-						if (terminate_pool && tasks_accessor->empty()) {
+					// Block until a task is available
+					{
+						std::unique_lock<std::mutex> lock(tasks.getMutex());
+						work_available_cv.wait(lock, [this] {
+							return terminate_pool ||
+								   !tasks.getUnsafeAccessor().empty();
+						});
+
+						if (terminate_pool &&
+							tasks.getUnsafeAccessor().empty()) {
 							return;
 						}
-						task = tasks_accessor->front();
-						tasks_accessor->pop();
+
+						// get a task from the queue
+						task = std::move(tasks.getUnsafeAccessor().front());
+						tasks.getUnsafeAccessor().pop();
 					}
 
 					// execute the task
@@ -78,7 +80,7 @@ class ThreadPool {
 
 		auto packaged_task = std::make_shared<std::packaged_task<R()>>(
 			[task = std::forward<F>(task),
-			 ... args = std::forward<Args>(args)] { task(args...); });
+			 ... args = std::forward<Args>(args)] { return task(args...); });
 
 		auto fut = packaged_task->get_future();
 
@@ -89,7 +91,8 @@ class ThreadPool {
 			});
 		}
 
-		semaphore.release();
+		// Notify one of the worker threads that a task is available
+		work_available_cv.notify_one();
 		return fut;
 	}
 
@@ -101,8 +104,11 @@ class ThreadPool {
 	}
 
 	~ThreadPool() {
-		terminate_pool = true;
-		semaphore.release(static_cast<int>(threads.size()));
+		{
+			std::scoped_lock lock(tasks.getMutex());
+			terminate_pool = true;
+		}
+		work_available_cv.notify_all();
 		for (auto &thread : threads) {
 			thread.join();
 		}
